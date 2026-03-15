@@ -13,6 +13,9 @@ import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.world.World;
 import net.minecraft.util.Identifier;
+import net.minecraft.text.ClickEvent;
+import net.minecraft.text.HoverEvent;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
@@ -38,7 +41,7 @@ public class HomeMod implements ModInitializer {
     private static final Path SAVE_FILE = CONFIG_DIR.resolve("player_homes.json");
 
     // Store home locations keyed by player UUID
-    private HashMap<String, String> playerHomes = new HashMap<>();
+    private final HashMap<String, String> playerHomes = new HashMap<>();
 
     public static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -166,10 +169,6 @@ public class HomeMod implements ModInitializer {
             }
 
             player.teleport(targetWorld, x, y, z, Set.of(), player.getYaw(), player.getPitch(), true);
-
-            player.sendMessage(Text.literal("Teleported to home '" + homeName + "' (" + targetWorld.getRegistryKey().getValue().toString() + ")")
-                    .styled(style -> style.withColor(Formatting.GOLD))
-            );
             return Command.SINGLE_SUCCESS;
         } catch (Throwable e) {
             LOGGER.error("Fail:", e);
@@ -199,15 +198,24 @@ public class HomeMod implements ModInitializer {
                 groupedHomes.computeIfAbsent(dimension, k -> new ArrayList<>()).add(homeName);
             }
 
-            StringBuilder message = new StringBuilder("--- Your Homes ---\n");
+            MutableText message = Text.literal("--- Your Homes ---\n").formatted(Formatting.GOLD);
             for (Map.Entry<String, List<String>> entry : groupedHomes.entrySet()) {
-                message.append("Dimension: ").append(entry.getKey()).append("\n");
+                message.append(Text.literal("Dimension: ").formatted(Formatting.GRAY))
+                        .append(Text.literal(entry.getKey() + "\n").formatted(Formatting.AQUA));
+                
                 for (String home : entry.getValue()) {
-                    message.append("  - ").append(home).append("\n");
+                    message.append(Text.literal("  - ").formatted(Formatting.GRAY))
+                            .append(Text.literal(home + "\n")
+                                    .styled(style -> style
+                                            .withColor(Formatting.YELLOW)
+                                            .withClickEvent(new ClickEvent.RunCommand("/home " + home))
+                                            .withHoverEvent(new HoverEvent.ShowText(Text.literal("Click to teleport to " + home)))
+                                            .withUnderline(true)
+                                    ));
                 }
             }
-            message.append("------------------");
-            player.sendMessage(Text.literal(message.toString()), false);
+            message.append(Text.literal("------------------").formatted(Formatting.GOLD));
+            player.sendMessage(message, false);
 
             return Command.SINGLE_SUCCESS;
         } catch (Throwable e) {
