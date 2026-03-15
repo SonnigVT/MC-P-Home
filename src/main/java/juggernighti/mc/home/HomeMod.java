@@ -8,6 +8,11 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryKeys;
+import net.minecraft.world.World;
+import net.minecraft.util.Identifier;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
@@ -58,7 +63,7 @@ public class HomeMod implements ModInitializer {
                         .executes(this::listCommand)
                 );
             });
-        } catch (Error e) {
+        } catch (Throwable e) {
             LOGGER.error("Fail:", e);
         }
     }
@@ -78,27 +83,19 @@ public class HomeMod implements ModInitializer {
 
             //UUID playerId = player.getUuid();
             BlockPos playerPos = player.getBlockPos();
+            String worldId = source.getWorld().getRegistryKey().getValue().toString();
 
+            final String pos = playerPos.getX() + ";" + playerPos.getY() + ";" + playerPos.getZ() + ";" + worldId;
 
-            //World world = player.getWorld();
-            boolean isTeleported = player.teleport(playerPos.getX() + 0.5D, playerPos.getY() + 1.5D, playerPos.getZ() + 0.5D, true);
-            if (isTeleported) {
-                final String pos = playerPos.getX() + ";" + playerPos.getY() + ";" + playerPos.getZ() + ";";
+            // Get or create the player's homes map
+            playerHomes.put(homeName, pos);
+            player.sendMessage(Text.literal("Home '" + homeName + "' set at: " + playerPos.toShortString() + " (" + worldId + ")")
+                    .styled(style -> style.withColor(Formatting.GOLD))
+            );
 
-                // Get or create the player's homes map
-                playerHomes.put(homeName, pos);
-                player.sendMessage(Text.literal("Home '" + homeName + "' set at: " + playerPos.toShortString())
-                        .styled(style -> style.withColor(Formatting.GOLD))
-                );
-
-                savePlayerHomes();
-            } else {
-                player.sendMessage(Text.literal("ERROR: can't create home '" + homeName + "' at: " + playerPos.toShortString())
-                        .styled(style -> style.withColor(Formatting.RED))
-                );
-            }
+            savePlayerHomes();
             return Command.SINGLE_SUCCESS;
-        } catch (Error e) {
+        } catch (Throwable e) {
             LOGGER.error("Fail:", e);
         }
         return 2;
@@ -123,7 +120,7 @@ public class HomeMod implements ModInitializer {
                     .styled(style -> style.withColor(Formatting.GOLD))
             );
             return Command.SINGLE_SUCCESS;
-        } catch (Error e) {
+        } catch (Throwable e) {
             LOGGER.error("Fail:", e);
         }
         return 2;
@@ -152,21 +149,29 @@ public class HomeMod implements ModInitializer {
                 return 0;
             }
 
-            BlockPos homePos = convertBlockPos(playerHomes.get(homeName));
+            String posString = playerHomes.get(homeName);
+            String[] posParts = posString.split(";");
+            double x = Double.parseDouble(posParts[0]) + 0.5D;
+            double y = Double.parseDouble(posParts[1]) + 1.5D;
+            double z = Double.parseDouble(posParts[2]) + 0.5D;
 
-            //World world = player.getWorld();
-            boolean isTeleported = player.teleport(homePos.getX() + 0.5D, homePos.getY() + 1.5D, homePos.getZ() + 0.5D, true);
-            if (isTeleported) {
-                player.sendMessage(Text.literal("Teleported to home '" + homeName + "' at: " + homePos.toShortString())
-                        .styled(style -> style.withColor(Formatting.GOLD))
-                );
-            } else {
-                player.sendMessage(Text.literal("ERROR can't teleported to home '" + homeName + "' at: " + homePos.toShortString())
-                        .styled(style -> style.withColor(Formatting.RED))
-                );
+            ServerWorld targetWorld = source.getWorld();
+            if (posParts.length >= 4) {
+                Identifier worldId = Identifier.of(posParts[3]);
+                RegistryKey<World> worldKey = RegistryKey.of(RegistryKeys.WORLD, worldId);
+                ServerWorld world = source.getServer().getWorld(worldKey);
+                if (world != null) {
+                    targetWorld = world;
+                }
             }
+
+            player.teleport(targetWorld, x, y, z, Set.of(), player.getYaw(), player.getPitch(), true);
+
+            player.sendMessage(Text.literal("Teleported to home '" + homeName + "' (" + targetWorld.getRegistryKey().getValue().toString() + ")")
+                    .styled(style -> style.withColor(Formatting.GOLD))
+            );
             return Command.SINGLE_SUCCESS;
-        } catch (Error e) {
+        } catch (Throwable e) {
             LOGGER.error("Fail:", e);
         }
         return 2;
@@ -183,15 +188,29 @@ public class HomeMod implements ModInitializer {
                 return 0;
             }
 
-            StringBuilder message = new StringBuilder("----------\n");
-            for (String home : playerHomes.keySet()) {
-                message.append(home).append("\n");
+            Map<String, List<String>> groupedHomes = new TreeMap<>();
+            for (Map.Entry<String, String> entry : playerHomes.entrySet()) {
+                String homeName = entry.getKey();
+                String[] posParts = entry.getValue().split(";");
+                String dimension = "unknown";
+                if (posParts.length >= 4) {
+                    dimension = posParts[3];
+                }
+                groupedHomes.computeIfAbsent(dimension, k -> new ArrayList<>()).add(homeName);
             }
-            message.append("----------");
+
+            StringBuilder message = new StringBuilder("--- Your Homes ---\n");
+            for (Map.Entry<String, List<String>> entry : groupedHomes.entrySet()) {
+                message.append("Dimension: ").append(entry.getKey()).append("\n");
+                for (String home : entry.getValue()) {
+                    message.append("  - ").append(home).append("\n");
+                }
+            }
+            message.append("------------------");
             player.sendMessage(Text.literal(message.toString()), false);
 
             return Command.SINGLE_SUCCESS;
-        } catch (Error e) {
+        } catch (Throwable e) {
             LOGGER.error("Fail:", e);
         }
         return 2;
@@ -217,7 +236,7 @@ public class HomeMod implements ModInitializer {
             } catch (IOException e) {
                 LOGGER.error("Failed to save players!", e);
             }
-        } catch (Error e) {
+        } catch (Throwable e) {
             LOGGER.error("Fail:", e);
         }
     }
@@ -238,13 +257,10 @@ public class HomeMod implements ModInitializer {
                     playerHomes.put(home, values);
                 }
             }
-        } catch (Error e) {
+        } catch (Throwable e) {
             LOGGER.error("Fail:", e);
         }
     }
 
-    private BlockPos convertBlockPos(String posString) {
-        String[] pos = posString.split(";");
-        return new BlockPos(Integer.parseInt(pos[0]), Integer.parseInt(pos[1]), Integer.parseInt(pos[2]));
-    }
+
 }
